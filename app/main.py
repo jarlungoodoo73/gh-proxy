@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
 import threading
+from urllib.parse import quote, urljoin
 
 import requests
 from flask import Flask, Response, redirect, request
@@ -11,7 +12,6 @@ from requests.utils import (
     stream_decode_response_unicode, iter_slices, CaseInsensitiveDict)
 from urllib3.exceptions import (
     DecodeError, ReadTimeoutError, ProtocolError)
-from urllib.parse import quote
 
 # config
 # 分支文件使用jsDelivr镜像的开关，0为关闭，默认关闭
@@ -81,7 +81,7 @@ def get_icon():
             # Double-check locking pattern to avoid race conditions
             if _icon_cache is None:
                 try:
-                    _icon_cache = requests.get(ASSET_URL + '/favicon.ico', timeout=5).content
+                    _icon_cache = requests.get(urljoin(ASSET_URL, '/favicon.ico'), timeout=5).content
                 except requests.exceptions.RequestException:
                     # Return empty icon if fetch fails
                     _icon_cache = b''
