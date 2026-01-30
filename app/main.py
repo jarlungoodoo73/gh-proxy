@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
+import threading
+from urllib.parse import quote, urljoin
 
 import requests
 from flask import Flask, Response, redirect, request
@@ -10,7 +12,6 @@ from requests.utils import (
     stream_decode_response_unicode, iter_slices, CaseInsensitiveDict)
 from urllib3.exceptions import (
     DecodeError, ReadTimeoutError, ProtocolError)
-from urllib.parse import quote
 
 # config
 # 分支文件使用jsDelivr镜像的开关，0为关闭，默认关闭
@@ -41,8 +42,51 @@ black_list = [tuple([x.replace(' ', '') for x in i.split('/')]) for i in black_l
 pass_list = [tuple([x.replace(' ', '') for x in i.split('/')]) for i in pass_list.split('\n') if i]
 app = Flask(__name__)
 CHUNK_SIZE = 1024 * 10
-index_html = requests.get(ASSET_URL, timeout=10).text
-icon_r = requests.get(ASSET_URL + '/favicon.ico', timeout=10).content
+
+# Lazy loading cache for external assets
+_index_html_cache = None
+_icon_cache = None
+_cache_lock = threading.Lock()
+
+def get_index_html():
+    """Lazy load and cache the index HTML from external URL"""
+    global _index_html_cache
+    if _index_html_cache is None:
+        with _cache_lock:
+            # Double-check locking pattern to avoid race conditions
+            if _index_html_cache is None:
+                try:
+                    _index_html_cache = requests.get(ASSET_URL, timeout=5).text
+                except requests.exceptions.RequestException:
+                    # Fallback to a simple HTML page if external asset fails
+                    _index_html_cache = '''<html>
+<head><title>GitHub Proxy</title></head>
+<body>
+    <h1>GitHub Proxy</h1>
+    <p>Enter a GitHub URL to proxy:</p>
+    <form action="/" method="get">
+        <input type="text" name="q" placeholder="https://github.com/..." style="width:400px;">
+        <button type="submit">Go</button>
+    </form>
+    <p><small>Note: External assets temporarily unavailable</small></p>
+</body>
+</html>'''
+    return _index_html_cache
+
+def get_icon():
+    """Lazy load and cache the favicon from external URL"""
+    global _icon_cache
+    if _icon_cache is None:
+        with _cache_lock:
+            # Double-check locking pattern to avoid race conditions
+            if _icon_cache is None:
+                try:
+                    _icon_cache = requests.get(urljoin(ASSET_URL, '/favicon.ico'), timeout=5).content
+                except requests.exceptions.RequestException:
+                    # Return empty icon if fetch fails
+                    _icon_cache = b''
+    return _icon_cache
+
 exp1 = re.compile(r'^(?:https?://)?github\.com/(?P<author>.+?)/(?P<repo>.+?)/(?:releases|archive)/.*$')
 exp2 = re.compile(r'^(?:https?://)?github\.com/(?P<author>.+?)/(?P<repo>.+?)/(?:blob|raw)/.*$')
 exp3 = re.compile(r'^(?:https?://)?github\.com/(?P<author>.+?)/(?P<repo>.+?)/(?:info|git-).*$')
@@ -56,12 +100,12 @@ requests.sessions.default_headers = lambda: CaseInsensitiveDict()
 def index():
     if 'q' in request.args:
         return redirect('/' + request.args.get('q'))
-    return index_html
+    return get_index_html()
 
 
 @app.route('/favicon.ico')
 def icon():
-    return Response(icon_r, content_type='image/vnd.microsoft.icon')
+    return Response(get_icon(), content_type='image/vnd.microsoft.icon')
 
 
 def iter_content(self, chunk_size=1, decode_unicode=False):
